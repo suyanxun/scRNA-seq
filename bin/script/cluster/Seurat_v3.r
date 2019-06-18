@@ -27,7 +27,7 @@ max.percent.mt=15
 	print_help(opt_parser)
 }
 
-load_cellranger_result <- function( sample_name, sample_dir_list, outdir, max.percent.mt, min.nFeature_RNA, max.nFeature_RNA, min.features ){ #读取cellranger分析结果
+load_cellranger_result <- function( sample_name, sample_dir_list, outdir, max.percent.mt, min.nFeature_RNA, max.nFeature_RNA, min.features, file_name ){ #读取cellranger分析结果
 	seurat_list = c()
 	infor2count<-c("rawCellNo","remainCellNo","filtered",paste("percent.mito>=",max.percent.mt,"%",sep=""), paste("nGene<=",min.nFeature_RNA,sep=""), paste("nGene>=", max.nFeature_RNA, sep="")  )
 	count<-matrix(0,nrow=length(sample_name),ncol=length(infor2count))
@@ -48,7 +48,6 @@ load_cellranger_result <- function( sample_name, sample_dir_list, outdir, max.pe
 									dim(subset(Seurat_object@meta.data,nFeature_RNA<=min.nFeature_RNA))[1],
 									dim(subset(Seurat_object@meta.data,nFeature_RNA>=max.nFeature_RNA))[1])
 	}
-	file_name = paste(sample_name, collapse = "_")
 	write.table(count,paste(outdir, "/", file_name,"_SampleFilteringCount.txt",sep=""),sep="\t",quote = FALSE)
 	return( seurat_list )
 }
@@ -74,7 +73,7 @@ variable_features_plots <- function( seurat_object, outdir, sample ){ #绘制特
 	plot1 <- VariableFeaturePlot(seurat_object)
 	plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
 	plots = CombinePlots(plots = list(plot1, plot2))
-	ggsave( paste( outdir, "/", sample, "_variable_features.pdf" ,sep = "" ) ,plots,limitsize = FALSE )
+	ggsave( paste( outdir, "/", sample, "_variable_features.png" ,sep = "" ) ,plots,limitsize = FALSE, height = 10, width = 20 )
 }
 
 visualize_PCA <- function( seurat_object, outdir, sample ){ #绘制PCA分析结果
@@ -115,8 +114,8 @@ sample_cluster_DimPlot <- function( seurat_object, outdir, sample, res, sample_n
 }
 
 features_plot <- function( seurat_object, seurat_object.markers, features, outdir, sample ){ #绘制features图
-	width = 6
-	height = 6
+	width = 5
+	height = 5
 	plots = VlnPlot(seurat_object, features = features, ncol=4, pt.size = 0.1)
 	ggsave( paste( outdir, "/", sample, "_biomarkers_VlnPlot.png" ,sep = "" ), plots, height = height*ceiling(length(features)/4),limitsize = FALSE, width = 4*width   )
 	plots = FeaturePlot(seurat_object, features = features,ncol=4, pt.size = 0.1, order = TRUE )
@@ -346,7 +345,7 @@ if ( Sample.ini$Analysis$analysis == "load_data_PCA" ){ #读取数据并分析�
 	}
 
 	print( "load_data_PCA" )
-	seurat_list = load_cellranger_result( sample_name, sample_dir_list, opt$o, max.percent.mt, min.nFeature_RNA, max.nFeature_RNA, min.features )
+	seurat_list = load_cellranger_result( sample_name, sample_dir_list, opt$o, max.percent.mt, min.nFeature_RNA, max.nFeature_RNA, min.features, file_name )
 	for (i in 1:length(seurat_list)){
 		qc_metrics_plots( seurat_list[[i]], opt$o, sample_name[i] )
 		seurat_list[[i]] <- filter_seurat_object( seurat_list[[i]], max.percent.mt, min.nFeature_RNA, max.nFeature_RNA  )
@@ -360,7 +359,7 @@ if ( Sample.ini$Analysis$analysis == "load_data_PCA" ){ #读取数据并分析�
 	}
 	seurat_object <- CellCycleScoring(object = seurat_object, s.features  = s.genes, g2m.features  = g2m.genes)
 	seurat_object$CC.Difference <- seurat_object$S.Score - seurat_object$G2M.Score
-	all.genes <- rownames(seurat_object)
+	all.genes <- rownames(seurat_object[["RNA"]])
 	seurat_object <- ScaleData(seurat_object, features = all.genes, vars.to.regress = c("percent.mt","CC.Difference"))
 	seurat_object <- RunPCA(seurat_object, npcs = 30, verbose = TRUE)
 	visualize_PCA( seurat_object, opt$o, file_name  )
