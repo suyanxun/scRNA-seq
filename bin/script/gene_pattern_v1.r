@@ -83,8 +83,8 @@ for (i in 1:length(sample_name) ){
 					}
 					
 				}
-				plot( 1:dim(up)[2], up[1,], main = cluster, ylab = "up", type = "l", ylim = c(0,1),lwd=0, yaxs="i",xaxs="i",xaxt="n")
-				axis(1,1:dim(flat)[2],labels=Time)
+				plot( 1:length(temp), temp, main = cluster, ylab = rownames(cluster_express_matrix)[n], type = "l", ylim = c(0,1), yaxs="i",xaxs="i",xaxt="n")
+				axis(1,1:length(temp),labels=Time)
 			}
 		}
 		par(opar)
