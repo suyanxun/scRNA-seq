@@ -27,17 +27,41 @@ max.percent.mt=15
 	print_help(opt_parser)
 }
 
-load_cellranger_result <- function( sample_name, sample_dir_list, outdir, max.percent.mt, min.nFeature_RNA, max.nFeature_RNA, min.features, file_name ){ #读取cellranger分析结果
+load_cellranger_result <- function( sample_name, sample_dir_list, outdir, max.percent.mt, min.nFeature_RNA, max.nFeature_RNA, min.features, file_name, datatype, Doublet ){ #读取cellranger分析结果
 	seurat_list = c()
-	infor2count<-c("rawCellNo","remainCellNo","filtered",paste("percent.mito>=",max.percent.mt,"%",sep=""), paste("nGene<=",min.nFeature_RNA,sep=""), paste("nGene>=", max.nFeature_RNA, sep="")  )
+	infor2count<-c("rawCellNo","remainCellNo","filtered",paste("percent.mito>=",max.percent.mt,"%",sep=""), paste("nGene<=",min.nFeature_RNA,sep=""), paste("nGene>=", max.nFeature_RNA, sep=""), "predictDoubletNo"  )
 	count<-matrix(0,nrow=length(sample_name),ncol=length(infor2count))
 	rownames(count)<-sample_name
 	colnames(count)<-infor2count
+	allDoublet <- c()
 	for (i in 1:length(sample_name)){  #读取cellranger参数并创建Seurat_object
-		Seurat_object.data = Read10X( data.dir = sample_dir_list[i] )
-		Seurat_object = CreateSeuratObject( counts = Seurat_object.data, project = sample_name[i], min.cells = 3,  min.features = min.features)
+		print(sample_dir_list[i])
+		if (datatype == "bc_matrix"){
+			Seurat_object.data = Read10X( data.dir = sample_dir_list[i] )
+			Seurat_object = CreateSeuratObject( counts = Seurat_object.data, project = sample_name[i], min.cells = 3,  min.features = min.features)
+		}else{
+			temp = as.matrix(read.table( file = sample_dir_list[i], as.is=TRUE, row.names=1, header=TRUE ))
+			Seurat_object = CreateSeuratObject( counts = temp )
+		}
 		Seurat_object<- RenameCells(Seurat_object,add.cell.id=sample_name[i])
+		if (!is.null( Doublet ) && !is.null( Doublet[[sample_name[i]]] )){
+			print( "去除双细胞" )
+			Doublet_file = Doublet[[sample_name[i]]][1]
+			doubletStatus <- read.table(Doublet_file)
+			cellBarcode <- read.table(paste( sample_dir_list[i], "/barcodes.tsv", sep = "" ))
+			cellBarcode <- paste(sample_name[i], substr(cellBarcode[,1],1,16), sep = "_")
+			doublet <- data.frame(cellBarcode = cellBarcode, doubletStatus_Scrublt = doubletStatus)
+			colnames(doublet) <- c("cellBarcode","doubletStatus_Scrublt")
+			rownames(doublet) <- cellBarcode
+			temp <- doublet[which(doublet$doubletStatus_Scrublt == "True"),"cellBarcode"]
+			temp <- as.character(temp)
+			allDoublet <- c(allDoublet,temp)
+			removeDoublet <- setdiff(colnames(Seurat_object), temp)
+			predictDoubletNo <- length(colnames(Seurat_object)) - length(removeDoublet)
+			Seurat_object <- subset(Seurat_object, cells = removeDoublet)
+		}
 		Seurat_object$stim <- sample_name[i]
+		
 		Seurat_object[["percent.mt"]] <- PercentageFeatureSet(object = Seurat_object, pattern = "^MT-")
 		seurat_list = c(seurat_list, Seurat_object)
 		rawCellNo=dim(Seurat_object)[2]
@@ -46,7 +70,8 @@ load_cellranger_result <- function( sample_name, sample_dir_list, outdir, max.pe
 		count[sample_name[i],] = c( rawCellNo, remainCellNo,filtered,
 									dim(subset(Seurat_object@meta.data,percent.mt>=max.percent.mt))[1],
 									dim(subset(Seurat_object@meta.data,nFeature_RNA<=min.nFeature_RNA))[1],
-									dim(subset(Seurat_object@meta.data,nFeature_RNA>=max.nFeature_RNA))[1])
+									dim(subset(Seurat_object@meta.data,nFeature_RNA>=max.nFeature_RNA))[1],
+									predictDoubletNo)
 	}
 	write.table(count,paste(outdir, "/", file_name,"_SampleFilteringCount.txt",sep=""),sep="\t",quote = FALSE)
 	return( seurat_list )
@@ -95,6 +120,8 @@ sample_cluster_DimPlot <- function( seurat_object, outdir, sample, res, sample_n
 	ggsave( paste( outdir, "/", sample, "_cluster_DimPlot_NoLegend.pdf" ,sep = "" ), plots, width = width, limitsize = FALSE, height = height )
 	plots = DimPlot(seurat_object, reduction = "umap", split.by = "stim")
 	ggsave( paste( outdir, "/", sample, "_sample_DimPlot.pdf" ,sep = "" ), plots, width = width*2, limitsize = FALSE, height = height*2 )
+	plots = DimPlot(seurat_object, reduction = "umap", split.by = "stim", group.by = "stim", ncol = 3)
+	ggsave( paste( outdir, "/", sample, "_sample_DimPlot_bySample.pdf" ,sep = "" ), plots, width = width*2, limitsize = FALSE, height = height*2 )
 	nrow <- ceiling(length(res)/4)
 	p<-1:length(res)
 	p <- paste(rep("p",length(res)),p,sep = "")
@@ -113,12 +140,12 @@ sample_cluster_DimPlot <- function( seurat_object, outdir, sample, res, sample_n
 	ggsave( paste( outdir, "/", sample, "_Different_Res_DimPlot.png",sep = "" ), plots, width = 4*width,height = height*nrow, limitsize = FALSE)
 }
 
-features_plot <- function( seurat_object, seurat_object.markers, features, outdir, sample ){ #绘制features图
+features_plot <- function( seurat_object, features, outdir, sample ){ #绘制features图
 	width = 5
 	height = 5
 	plots = VlnPlot(seurat_object, features = features, ncol=4, pt.size = 0.1)
 	ggsave( paste( outdir, "/", sample, "_biomarkers_VlnPlot.png" ,sep = "" ), plots, height = height*ceiling(length(features)/4),limitsize = FALSE, width = 4*width   )
-	plots = FeaturePlot(seurat_object, features = features,ncol=4, pt.size = 0.1, order = TRUE )
+	plots = FeaturePlot(seurat_object, features = features,ncol=4, pt.size = 0.1, order = TRUE, min.cutoff = "q20" )
 	ggsave( paste( outdir, "/", sample, "_biomarkers_FeaturePlot.png" ,sep = "" ), plots, height = height*ceiling(length(features)/4),limitsize = FALSE, width = 4*width  )
 }
 
@@ -270,7 +297,7 @@ mutation_marker_plot_NoLegend <- function( Mutation, seurat_object, outfile, res
 			cols=c("#CCCCCC","#FFFF00","#CC0033")
 		}
 		
-		temp = DimPlot(object = seurat_object, reduction="umap",group.by = name, order=order, cols=cols,pt.size = 0.1, cells = cell.use) + labs( title = sample_gene ) + NoLegend()
+		temp = DimPlot(object = seurat_object, reduction="umap",group.by = name, order=order, cols=cols, pt.size = 0.1, cells = cell.use) + labs( title = sample_gene ) + NoLegend()
 		assign( p[i+3], temp )
 	}
 	text = paste( paste( "get(p[",1:length(p),"]) ", sep = "" ), collapse = ",")
@@ -288,6 +315,8 @@ option_list = list(
 				help="[Required] 配置文件，参见示例./example.ini", metavar = "character"),
 	make_option(c("-o", "--outdir"), type="character", default=NULL, 
 				help="[Required] 结果输出目录", metavar="character"),
+	make_option(c("-d", "--datatype"), type="character", default="bc_matrix", 
+				help="[Required] 数据类型，是表达矩阵还是cellranger分析结果。bc_matrix:cellranger分析结果 express_matrix:表达矩阵", metavar="character"),
 	make_option(c("-r", "--rds"), type="character", default=NULL, 
 				help="[Optional] 读取保存的数据路径(.rds)", metavar="character")
 );
@@ -355,7 +384,7 @@ if ( Sample.ini$Analysis$analysis == "load_data_PCA" ){ #读取数据并分析�
 	}
 
 	print( "load_data_PCA" )
-	seurat_list = load_cellranger_result( sample_name, sample_dir_list, opt$o, max.percent.mt, min.nFeature_RNA, max.nFeature_RNA, min.features, file_name )
+	seurat_list = load_cellranger_result( sample_name, sample_dir_list, opt$o, max.percent.mt, min.nFeature_RNA, max.nFeature_RNA, min.features, file_name, opt$d,  Sample.ini$Doublet)
 	for (i in 1:length(seurat_list)){
 		qc_metrics_plots( seurat_list[[i]], opt$o, sample_name[i] )
 		seurat_list[[i]] <- filter_seurat_object( seurat_list[[i]], max.percent.mt, min.nFeature_RNA, max.nFeature_RNA  )
@@ -364,8 +393,8 @@ if ( Sample.ini$Analysis$analysis == "load_data_PCA" ){ #读取数据并分析�
 	if ( length(seurat_list) == 1 ){
 		seurat_object = seurat_list[[1]]
 	}else{
-		seurat_list.anchors <- FindIntegrationAnchors(object.list = seurat_list, dims = 1:25)
-		seurat_object <- IntegrateData(anchorset = seurat_list.anchors, dims = 1:25)
+		seurat_list.anchors <- FindIntegrationAnchors(object.list = seurat_list, dims = 1:10)
+		seurat_object <- IntegrateData(anchorset = seurat_list.anchors, dims = 1:10)
 	}
 	seurat_object <- CellCycleScoring(object = seurat_object, s.features  = s.genes, g2m.features  = g2m.genes)
 	seurat_object$CC.Difference <- seurat_object$S.Score - seurat_object$G2M.Score
@@ -403,17 +432,19 @@ if ( Sample.ini$Analysis$analysis == "cluster" ){ #根据选择的PC数进行聚
 	for (i in 1:length(dims)){
 		seurat_object <- readRDS( file = rds_file )
 		dim = dims[i]
+		print( dim )
 		file_name = paste( file_name_temp, "_Dim", dim, sep = "" )
 		seurat_object <- RunUMAP(seurat_object, reduction = "pca", dims = 1:dim)
 		seurat_object <- FindNeighbors(seurat_object, reduction = "pca", dims = 1:dim)
 		seurat_object <- FindClusters(seurat_object, resolution = res)
 		sample_cluster_DimPlot( seurat_object, opt$o, file_name, res, sample_name )
 		DefaultAssay(seurat_object) <- "RNA"
-		nk.markers = FindAllMarkers(seurat_object, min.pct = 0.25, logfc.threshold = 0.25, grouping.var = "stim")
-		write.table(nk.markers ,file = paste( opt$o, "/", file_name, "_all_marker.txt" ,sep = "" ), quote = FALSE,row.names = TRUE, sep = "\t")
+		#nk.markers = FindAllMarkers(seurat_object, min.pct = 0.25, logfc.threshold = 0.25, grouping.var = "stim")
+		#write.table(nk.markers ,file = paste( opt$o, "/", file_name, "_all_marker.txt" ,sep = "" ), quote = FALSE,row.names = TRUE, sep = "\t")
 		features <- features[features %in% rownames(seurat_object[["RNA"]]@data)]
+		print( "保存结果" )
 		saveRDS( seurat_object, file = paste( opt$o, "/", file_name, "_cluster.rds" ,sep = ""))
-		features_plot( seurat_object, nk.markers, features, opt$o, file_name )
+		features_plot( seurat_object, features, opt$o, file_name )
 	}
 	file_name <- file_name_temp
 }
@@ -447,7 +478,7 @@ if ( Sample.ini$Analysis$analysis == "mark_mutation_and_celltype" ){ #点亮突�
 	new.cluster.ids <- Cluster_cellType( Sample.ini$CellType, levels(seurat_object) )
 	names(new.cluster.ids) <- levels(seurat_object)
 	seurat_object <- RenameIdents(seurat_object, new.cluster.ids)
-	plots = DimPlot(seurat_object, reduction = "umap", label = TRUE, pt.size = 0.3, label.size = 1.5) + NoLegend()
+	plots = DimPlot(seurat_object, reduction = "umap", label = TRUE, pt.size = 0.3, label.size = 3) + NoLegend()
 	ggsave( paste( opt$o, "/", file_name, "_celltype_DimPlot.pdf" ,sep = "" ), plots, width = 10, limitsize = FALSE , height = 10)
 	summary_matrix <- cluster_calculation( seurat_object, paste( opt$o, "/", file_name, "_summary_matrix.txt" ,sep = "" ), sample_name)
 	summary_matrix[ is.na(summary_matrix) ] =0
@@ -481,8 +512,8 @@ if ( Sample.ini$Analysis$analysis == "mark_mutation_and_celltype" ){ #点亮突�
 	
 	mutation_marker_plot( Sample.ini$Mutation, seurat_object, paste( opt$o, "/", file_name, "_mutation_marker.png" ,sep = "" ), res )
 	mutation_marker_plot_NoLegend( Sample.ini$Mutation, seurat_object, paste( opt$o, "/", file_name, "_mutation_marker_NoLegend.png" ,sep = "" ), res )
-	plots = DimPlot(seurat_object, reduction = "umap", split.by = "stim",pt.size = 0.1)
-	ggsave( paste( opt$o, "/", file_name, "_sample_DimPlot.pdf" ,sep = "" ), plots, width = 10, limitsize = FALSE, height = 10 )
+	plots = DimPlot(seurat_object, reduction = "umap", split.by = "stim",pt.size = 0.1, ncol = 3)
+	ggsave( paste( opt$o, "/", file_name, "_sample_DimPlot.pdf" ,sep = "" ), plots, width = 10*3, limitsize = FALSE, height = 10*ceiling(length(sample_name)/3) )
 	plots = DimPlot(seurat_object, reduction = "umap", split.by = "Phase",pt.size = 0.1)
 	ggsave( paste( opt$o, "/", file_name, "_Phase_DimPlot.pdf" ,sep = "" ), plots, width = 33, limitsize = FALSE, height = 10 )
 	saveRDS( seurat_object, file = paste( opt$o, "/", file_name, "_mark_mutation_and_celltype.rds", sep = ""))

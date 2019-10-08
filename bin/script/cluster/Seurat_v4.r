@@ -27,15 +27,22 @@ max.percent.mt=15
 	print_help(opt_parser)
 }
 
-load_cellranger_result <- function( sample_name, sample_dir_list, outdir, max.percent.mt, min.nFeature_RNA, max.nFeature_RNA, min.features, file_name ){ #读取cellranger分析结果
+load_cellranger_result <- function( sample_name, sample_dir_list, outdir, max.percent.mt, min.nFeature_RNA, max.nFeature_RNA, min.features, file_name, datatype ){ #读取cellranger分析结果
 	seurat_list = c()
 	infor2count<-c("rawCellNo","remainCellNo","filtered",paste("percent.mito>=",max.percent.mt,"%",sep=""), paste("nGene<=",min.nFeature_RNA,sep=""), paste("nGene>=", max.nFeature_RNA, sep="")  )
 	count<-matrix(0,nrow=length(sample_name),ncol=length(infor2count))
 	rownames(count)<-sample_name
 	colnames(count)<-infor2count
 	for (i in 1:length(sample_name)){  #读取cellranger参数并创建Seurat_object
-		Seurat_object.data = Read10X( data.dir = sample_dir_list[i] )
-		Seurat_object = CreateSeuratObject( counts = Seurat_object.data, project = sample_name[i], min.cells = 3,  min.features = min.features)
+		print(sample_dir_list[i])
+		if (datatype == "bc_matrix"){
+			Seurat_object.data = Read10X( data.dir = sample_dir_list[i] )
+			Seurat_object = CreateSeuratObject( counts = Seurat_object.data, project = sample_name[i], min.cells = 3,  min.features = min.features)
+		}else{
+			temp = as.matrix(read.table( file = sample_dir_list[i], as.is=TRUE, row.names=1, header=TRUE ))
+			Seurat_object = CreateSeuratObject( counts = temp )
+		}
+		print( dim(Seurat_object) )
 		Seurat_object<- RenameCells(Seurat_object,add.cell.id=sample_name[i])
 		Seurat_object$stim <- sample_name[i]
 		Seurat_object[["percent.mt"]] <- PercentageFeatureSet(object = Seurat_object, pattern = "^MT-")
@@ -95,6 +102,8 @@ sample_cluster_DimPlot <- function( seurat_object, outdir, sample, res, sample_n
 	ggsave( paste( outdir, "/", sample, "_cluster_DimPlot_NoLegend.pdf" ,sep = "" ), plots, width = width, limitsize = FALSE, height = height )
 	plots = DimPlot(seurat_object, reduction = "umap", split.by = "stim")
 	ggsave( paste( outdir, "/", sample, "_sample_DimPlot.pdf" ,sep = "" ), plots, width = width*2, limitsize = FALSE, height = height*2 )
+	plots = DimPlot(seurat_object, reduction = "umap", split.by = "stim", group.by = "stim", ncol = 3)
+	ggsave( paste( outdir, "/", sample, "_sample_DimPlot_bySample.pdf" ,sep = "" ), plots, width = width*2, limitsize = FALSE, height = height*2 )
 	nrow <- ceiling(length(res)/4)
 	p<-1:length(res)
 	p <- paste(rep("p",length(res)),p,sep = "")
@@ -270,7 +279,7 @@ mutation_marker_plot_NoLegend <- function( Mutation, seurat_object, outfile, res
 			cols=c("#CCCCCC","#FFFF00","#CC0033")
 		}
 		
-		temp = DimPlot(object = seurat_object, reduction="umap",group.by = name, order=order, cols=cols,pt.size = 0.1, cells = cell.use) + labs( title = sample_gene ) + NoLegend()
+		temp = DimPlot(object = seurat_object, reduction="umap",group.by = name, order=order, cols=cols, pt.size = 0.1, cells = cell.use) + labs( title = sample_gene ) + NoLegend()
 		assign( p[i+3], temp )
 	}
 	text = paste( paste( "get(p[",1:length(p),"]) ", sep = "" ), collapse = ",")
@@ -288,6 +297,8 @@ option_list = list(
 				help="[Required] 配置文件，参见示例./example.ini", metavar = "character"),
 	make_option(c("-o", "--outdir"), type="character", default=NULL, 
 				help="[Required] 结果输出目录", metavar="character"),
+	make_option(c("-d", "--datatype"), type="character", default="bc_matrix", 
+				help="[Required] 数据类型，是表达矩阵还是cellranger分析结果。bc_matrix:cellranger分析结果 express_matrix:表达矩阵", metavar="character"),
 	make_option(c("-r", "--rds"), type="character", default=NULL, 
 				help="[Optional] 读取保存的数据路径(.rds)", metavar="character")
 );
@@ -355,7 +366,7 @@ if ( Sample.ini$Analysis$analysis == "load_data_PCA" ){ #读取数据并分析�
 	}
 
 	print( "load_data_PCA" )
-	seurat_list = load_cellranger_result( sample_name, sample_dir_list, opt$o, max.percent.mt, min.nFeature_RNA, max.nFeature_RNA, min.features, file_name )
+	seurat_list = load_cellranger_result( sample_name, sample_dir_list, opt$o, max.percent.mt, min.nFeature_RNA, max.nFeature_RNA, min.features, file_name, opt$d )
 	for (i in 1:length(seurat_list)){
 		qc_metrics_plots( seurat_list[[i]], opt$o, sample_name[i] )
 		seurat_list[[i]] <- filter_seurat_object( seurat_list[[i]], max.percent.mt, min.nFeature_RNA, max.nFeature_RNA  )
@@ -364,8 +375,8 @@ if ( Sample.ini$Analysis$analysis == "load_data_PCA" ){ #读取数据并分析�
 	if ( length(seurat_list) == 1 ){
 		seurat_object = seurat_list[[1]]
 	}else{
-		seurat_list.anchors <- FindIntegrationAnchors(object.list = seurat_list, dims = 1:25)
-		seurat_object <- IntegrateData(anchorset = seurat_list.anchors, dims = 1:25)
+		seurat_list.anchors <- FindIntegrationAnchors(object.list = seurat_list, dims = 1:10)
+		seurat_object <- IntegrateData(anchorset = seurat_list.anchors, dims = 1:10)
 	}
 	seurat_object <- CellCycleScoring(object = seurat_object, s.features  = s.genes, g2m.features  = g2m.genes)
 	seurat_object$CC.Difference <- seurat_object$S.Score - seurat_object$G2M.Score

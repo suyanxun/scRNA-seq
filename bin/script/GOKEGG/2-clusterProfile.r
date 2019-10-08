@@ -20,7 +20,7 @@ option_list = list(
 opt_parser = OptionParser(option_list=option_list)
 opt = parse_args(opt_parser)
 
-if (is.null(opt$i) || is.null(opt$o)){
+if (is.null(opt$g) || is.null(opt$o)){
 	usage()
 	q()
 }
@@ -28,17 +28,17 @@ if(!file.exists( opt$o )) {
 	dir.create(opt$o)
 }
 if (is.null(opt$s)){
-	opt$s = basename( opt$i )
+	opt$s = basename( opt$g )
 }
 
 library(DOSE)
 library(org.Hs.eg.db)
 #library(topGO)
 library(clusterProfiler)
-library(pathview)
+#library(pathview)
 library(ggplot2)
 
-gene <- read.table( opt$i, header=FALSE)
+gene <- read.table( opt$g, header=FALSE)
 gene$V1 <- as.character(gene$V1)
 gene_trans = bitr(gene$V1, fromType="SYMBOL", toType=c("ENSEMBL", "ENTREZID"), OrgDb="org.Hs.eg.db")
 data(geneList, package="DOSE")
@@ -47,7 +47,7 @@ write.table(as.data.frame(ego_ALL),paste(opt$o,"/",opt$s,"_ALL-enrichGo.csv",sep
 plots = dotplot(ego_ALL,title= paste(opt$s," EnrichmentGO",sep = ""))
 ggsave( paste(opt$o,"/",opt$s,"_ALL-EnrichmentGO_dot.png",sep = ""), plots, height = 10, width = 10 )
 plots = barplot(ego_ALL, showCategory=20,title="EnrichmentGO_ALL")
-ggsave( paste(opt$o,"/",opt$s,"_ALL-EnrichmentGO_dot.png",sep = ""), plots, height = 10, width = 10 )
+ggsave( paste(opt$o,"/",opt$s,"_ALL-EnrichmentGO_bar.png",sep = ""), plots, height = 10, width = 10 )
 
 ekk = enrichKEGG(gene = gene_trans$ENTREZID, organism = "hsa", universe = names(geneList), pvalueCutoff = 1, qvalueCutoff = 1, minGSSize = 1, use_internal_data = FALSE)
 write.table(as.data.frame(ekk@result), file=paste(opt$o,"/",opt$s,"_ALL-enrichKegg.csv",sep=""), sep = "\t", quote = FALSE)
